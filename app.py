@@ -8,6 +8,8 @@ import json
 import time
 from typing import Dict, List, Tuple, Optional
 import random
+import numpy as np
+from karyoenhance import KaryoEnhancePipeline
 
 # 페이지 설정
 st.set_page_config(
@@ -71,6 +73,10 @@ if 'analysis_result' not in st.session_state:
     st.session_state.analysis_result = None
 if 'uploaded_image' not in st.session_state:
     st.session_state.uploaded_image = None
+if 'enhanced_image' not in st.session_state:
+    st.session_state.enhanced_image = None
+if 'enhancement_metrics' not in st.session_state:
+    st.session_state.enhancement_metrics = None
 
 class KaryotypeAnalyzer:
     """염색체 핵형 분석기 클래스"""
@@ -210,41 +216,141 @@ def display_disclaimer():
     </div>
     """, unsafe_allow_html=True)
 
+def display_enhancement_section(image: Image.Image):
+    """이미지 품질 향상 섹션"""
+    st.header("✨ KaryoEnhance: Image Quality Enhancement")
+
+    st.markdown("""
+    <div style="background-color: #E0F2FE; padding: 1rem; border-radius: 5px; margin-bottom: 1rem;">
+        <strong>🔬 KaryoEnhance</strong> uses Gaussian-Poisson noise model and saturation homogenization
+        to improve low-quality microscope images, achieving 7-10% improvement in downstream analysis accuracy.
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        enable_enhancement = st.checkbox(
+            "Enable KaryoEnhance",
+            value=True,
+            help="Apply noise removal and color correction"
+        )
+
+        if enable_enhancement:
+            enhancement_mode = st.selectbox(
+                "Enhancement Mode",
+                ["default", "aggressive", "mild"],
+                help="Default: balanced, Aggressive: strong denoising, Mild: subtle enhancement"
+            )
+
+    with col2:
+        if enable_enhancement:
+            st.markdown("""
+            **Enhancement Steps:**
+            1. Gaussian-Poisson denoising
+            2. Illumination correction
+            3. Saturation homogenization
+            4. CLAHE contrast enhancement
+            """)
+
+    if enable_enhancement and st.button("🚀 Apply Enhancement", type="primary"):
+        with st.spinner("Enhancing image quality..."):
+            pipeline = KaryoEnhancePipeline()
+
+            # 진행률 표시
+            progress_bar = st.progress(0)
+            for i in range(100):
+                time.sleep(0.01)
+                progress_bar.progress(i + 1)
+
+            # Enhancement 적용
+            enhanced_image, metrics = pipeline.process_pil_image(image,
+                pipeline.get_aggressive_config() if enhancement_mode == 'aggressive'
+                else pipeline.get_mild_config() if enhancement_mode == 'mild'
+                else pipeline.get_default_config()
+            )
+
+            st.session_state.enhanced_image = enhanced_image
+            st.session_state.enhancement_metrics = metrics
+
+            st.success("✅ Enhancement completed!")
+
+            # 결과 비교 표시
+            st.subheader("📊 Before & After Comparison")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.image(image, caption="Original Image", use_column_width=True)
+
+            with col2:
+                st.image(enhanced_image, caption="Enhanced Image", use_column_width=True)
+
+            # 품질 지표 표시
+            st.subheader("📈 Quality Metrics")
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+
+            with metric_col1:
+                st.metric(
+                    "Contrast Improvement",
+                    f"{metrics['contrast_improvement_pct']:.1f}%",
+                    delta=f"{metrics['contrast_improvement_pct']:.1f}%"
+                )
+
+            with metric_col2:
+                st.metric(
+                    "Sharpness Improvement",
+                    f"{metrics['sharpness_improvement_pct']:.1f}%",
+                    delta=f"{metrics['sharpness_improvement_pct']:.1f}%"
+                )
+
+            with metric_col3:
+                st.metric(
+                    "Noise Reduction",
+                    f"{metrics['noise_reduction_pct']:.1f}%",
+                    delta=f"{metrics['noise_reduction_pct']:.1f}%"
+                )
+
+            # 상세 메트릭
+            with st.expander("🔍 Detailed Metrics"):
+                st.json(metrics)
+
+    return st.session_state.enhanced_image if enable_enhancement and st.session_state.enhanced_image else image
+
 def display_upload_section():
     """이미지 업로드 섹션"""
     st.header("📤 Upload Metaphase Spread Image")
-    
+
     col1, col2 = st.columns([2, 1])
-    
+
     with col1:
         uploaded_file = st.file_uploader(
             "Choose an image file",
             type=['png', 'jpg', 'jpeg', 'tiff', 'bmp'],
             help="Upload a high-quality metaphase spread image (max 10MB)"
         )
-        
+
         if uploaded_file is not None:
             # 파일 크기 확인
             if uploaded_file.size > 10 * 1024 * 1024:  # 10MB
                 st.error("File size exceeds 10MB limit. Please upload a smaller image.")
                 return None
-            
+
             # 이미지 로드
             image = Image.open(uploaded_file)
             st.session_state.uploaded_image = image
-            
+
             # 이미지 미리보기
             st.image(image, caption="Uploaded Image", use_column_width=True)
-            
+
             # 이미지 메타데이터
             st.info(f"**Image Details:**\n"
                    f"- Format: {image.format}\n"
                    f"- Size: {image.size[0]} x {image.size[1]} pixels\n"
                    f"- Mode: {image.mode}\n"
                    f"- File size: {uploaded_file.size / 1024:.1f} KB")
-            
+
             return image
-    
+
     with col2:
         st.markdown("""
         ### Guidelines:
@@ -252,13 +358,13 @@ def display_upload_section():
         - Ensure clear chromosome spread
         - Avoid overlapping chromosomes
         - Good contrast and lighting
-        
+
         ### Supported Formats:
         - PNG, JPG, JPEG
         - TIFF, BMP
         - Max size: 10MB
         """)
-    
+
     return None
 
 def display_analysis_section(analyzer: KaryotypeAnalyzer, image: Image.Image):
@@ -444,23 +550,31 @@ def main():
     
     # 분석기 초기화
     analyzer = KaryotypeAnalyzer(api_key=api_key)
-    
+
     # 이미지 업로드
     image = display_upload_section()
-    
-    # 분석 섹션
+
+    # 이미지 품질 향상 (KaryoEnhance)
     if image is not None:
-        display_analysis_section(analyzer, image)
-    
+        st.markdown("---")
+        processed_image = display_enhancement_section(image)
+
+        st.markdown("---")
+
+        # 분석 섹션 (enhanced 또는 original 이미지 사용)
+        display_analysis_section(analyzer, processed_image)
+
     # 결과 표시
     if st.session_state.analysis_result is not None:
         display_results(st.session_state.analysis_result)
         display_report_section(st.session_state.analysis_result)
-        
+
         # 새 분석 버튼
         if st.button("🔄 Start New Analysis"):
             st.session_state.analysis_result = None
             st.session_state.uploaded_image = None
+            st.session_state.enhanced_image = None
+            st.session_state.enhancement_metrics = None
             st.rerun()
 
 if __name__ == "__main__":
