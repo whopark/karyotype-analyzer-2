@@ -11,10 +11,10 @@ import random
 
 # 페이지 설정
 st.set_page_config(
-    page_title="Chromosome Karyotype Analyzer",
-    page_icon="🧬",
+    page_title="Medical Image Analyzer",
+    page_icon="🏥",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 # CSS 스타일
@@ -415,53 +415,72 @@ def display_report_section(result: Dict):
             mime="application/json"
         )
 
-def main():
-    """메인 애플리케이션"""
+def run_karyotype():
+    """Karyotype analysis page."""
     # 헤더 표시
     display_header()
-    
+
     # 면책 조항
     display_disclaimer()
-    
+
     # API 키 설정 (사이드바)
     with st.sidebar:
-        st.header("⚙️ Settings")
+        st.header("⚙️ Karyotype Settings")
         api_key = st.text_input(
             "Hugging Face API Key",
             type="password",
             help="Enter your Hugging Face API key for EXAONE-Path-2.0 access"
         )
-        
+
         st.markdown("""
         ### About
-        This tool uses the EXAONE-Path-2.0 model to analyze chromosome metaphase spreads 
+        This tool uses the EXAONE-Path-2.0 model to analyze chromosome metaphase spreads
         and generate ISCN 2020 compliant karyotype notations.
-        
+
         ### Resources
         - [ISCN 2020 Standards](https://iscn2020.org/)
         - [EXAONE-Path-2.0 Model](https://huggingface.co/LGAI-EXAONE/EXAONE-Path-2.0)
         """)
-    
+
     # 분석기 초기화
     analyzer = KaryotypeAnalyzer(api_key=api_key)
-    
+
     # 이미지 업로드
     image = display_upload_section()
-    
+
     # 분석 섹션
     if image is not None:
         display_analysis_section(analyzer, image)
-    
+
     # 결과 표시
     if st.session_state.analysis_result is not None:
         display_results(st.session_state.analysis_result)
         display_report_section(st.session_state.analysis_result)
-        
+
         # 새 분석 버튼
         if st.button("🔄 Start New Analysis"):
             st.session_state.analysis_result = None
             st.session_state.uploaded_image = None
             st.rerun()
+
+
+def main():
+    """Main application with page navigation."""
+    with st.sidebar:
+        st.title("🏥 Medical Image Analyzer")
+        page = st.radio(
+            "Select Analysis Tool",
+            ["🧬 Karyotype Analyzer", "🦴 Rib Fracture Detector"],
+            index=0,
+        )
+        st.divider()
+
+    if page == "🦴 Rib Fracture Detector":
+        import rib_fracture_app
+        rib_fracture_app.run()
+    else:
+        run_karyotype()
+
 
 if __name__ == "__main__":
     main()
