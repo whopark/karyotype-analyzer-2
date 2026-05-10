@@ -587,9 +587,12 @@ if 'api_key_saved' not in st.session_state:
 def inject_local_storage_script(action: str, key_value: str = ""):
     """Inject JavaScript to interact with localStorage"""
     if action == "save":
+        # Use JSON encoding to prevent XSS - properly escapes quotes and special chars
+        import json as json_module
+        safe_key = json_module.dumps(key_value)  # Returns quoted string like '"sk-xxx"'
         return f"""
         <script>
-        localStorage.setItem('karyotype_openai_api_key', '{key_value}');
+        localStorage.setItem('karyotype_openai_api_key', {safe_key});
         console.log('API key saved to localStorage');
         </script>
         """
@@ -1084,17 +1087,41 @@ IMPORTANT: The CV system detected {cv_count} chromosomes. Use this as your prima
                     except json.JSONDecodeError:
                         continue
 
-            # Method 3: Find JSON object by matching braces
-            # Find the first { and last } to extract the JSON object
+            # Method 3: Find JSON object by proper brace counting
+            # This handles nested objects correctly
             first_brace = raw_content.find('{')
-            last_brace = raw_content.rfind('}')
-            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-                json_str = raw_content[first_brace:last_brace + 1]
-                try:
-                    result = json.loads(json_str)
-                    return self._finalize_result(result, provider_name)
-                except json.JSONDecodeError:
-                    pass
+            if first_brace != -1:
+                brace_count = 0
+                in_string = False
+                escape_next = False
+                end_pos = -1
+
+                for i, char in enumerate(raw_content[first_brace:], start=first_brace):
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    if char == '\\' and in_string:
+                        escape_next = True
+                        continue
+                    if char == '"' and not escape_next:
+                        in_string = not in_string
+                        continue
+                    if not in_string:
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                end_pos = i
+                                break
+
+                if end_pos != -1:
+                    json_str = raw_content[first_brace:end_pos + 1]
+                    try:
+                        result = json.loads(json_str)
+                        return self._finalize_result(result, provider_name)
+                    except json.JSONDecodeError:
+                        pass
 
             # Method 4: Try to fix common JSON issues
             # Remove trailing commas before } or ]
@@ -1756,15 +1783,21 @@ def display_sidebar_settings() -> tuple:
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("💾 Save", use_container_width=True, help="Save API key to browser"):
-                    if api_key and api_key.strip().startswith("sk-"):
-                        clean_key = api_key.strip()
+                    clean_key = api_key.strip() if api_key else ""
+                    # Validate API key format: starts with sk-, min 20 chars, alphanumeric/dash/underscore only
+                    is_valid = (
+                        clean_key.startswith("sk-") and
+                        len(clean_key) >= 20 and
+                        all(c.isalnum() or c in '-_' for c in clean_key)
+                    )
+                    if is_valid:
                         st.session_state.saved_api_key = clean_key
                         st.session_state.api_key_saved = True
                         # Inject JavaScript to save to localStorage
                         st.markdown(inject_local_storage_script("save", clean_key), unsafe_allow_html=True)
                         st.success("✅ Saved to browser!")
                     else:
-                        st.error("❌ Invalid key (must start with sk-)")
+                        st.error("❌ Invalid key format")
 
             with col2:
                 if st.button("🗑️ Clear", use_container_width=True, help="Clear saved API key"):
