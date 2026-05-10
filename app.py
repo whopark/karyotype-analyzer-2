@@ -1011,45 +1011,93 @@ IMPORTANT: The CV system detected {cv_count} chromosomes. Use this as your prima
         return result
 
     def _parse_response(self, raw_content: str, provider_name: str) -> Dict:
-        """API 응답에서 JSON 파싱"""
+        """API 응답에서 JSON 파싱 - 다양한 형식 지원"""
+        if not raw_content or not raw_content.strip():
+            return self._create_error_response("Empty response from API", "", provider_name)
+
         try:
-            # Try to extract JSON from the response
-            json_match = re.search(r'\{[\s\S]*\}', raw_content)
-            if json_match:
-                result = json.loads(json_match.group())
-            else:
-                raise ValueError("No JSON found in response")
+            # Method 1: Try to parse directly as JSON
+            try:
+                result = json.loads(raw_content.strip())
+                return self._finalize_result(result, provider_name)
+            except json.JSONDecodeError:
+                pass
 
-            # Ensure required fields exist
-            result.setdefault('notation', 'Unable to determine')
-            result.setdefault('chromosome_count', 0)
-            result.setdefault('sex_chromosomes', 'Unknown')
-            result.setdefault('abnormalities', [])
-            result.setdefault('confidence', 0)
-            result.setdefault('interpretation', 'Analysis incomplete')
-            result.setdefault('detailed_findings', '')
+            # Method 2: Extract from markdown code blocks (```json ... ```)
+            code_block_patterns = [
+                r'```json\s*([\s\S]*?)\s*```',
+                r'```\s*([\s\S]*?)\s*```',
+            ]
+            for pattern in code_block_patterns:
+                match = re.search(pattern, raw_content)
+                if match:
+                    try:
+                        result = json.loads(match.group(1).strip())
+                        return self._finalize_result(result, provider_name)
+                    except json.JSONDecodeError:
+                        continue
 
-            # Add metadata
-            result['analysis_time'] = datetime.now().isoformat()
-            result['technical_notes'] = f"Analysis performed using {provider_name}"
-            result['provider'] = provider_name
+            # Method 3: Find JSON object by matching braces
+            # Find the first { and last } to extract the JSON object
+            first_brace = raw_content.find('{')
+            last_brace = raw_content.rfind('}')
+            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                json_str = raw_content[first_brace:last_brace + 1]
+                try:
+                    result = json.loads(json_str)
+                    return self._finalize_result(result, provider_name)
+                except json.JSONDecodeError:
+                    pass
 
-            return result
+            # Method 4: Try to fix common JSON issues
+            # Remove trailing commas before } or ]
+            cleaned = re.sub(r',\s*([}\]])', r'\1', raw_content)
+            first_brace = cleaned.find('{')
+            last_brace = cleaned.rfind('}')
+            if first_brace != -1 and last_brace != -1:
+                json_str = cleaned[first_brace:last_brace + 1]
+                try:
+                    result = json.loads(json_str)
+                    return self._finalize_result(result, provider_name)
+                except json.JSONDecodeError:
+                    pass
 
-        except (json.JSONDecodeError, ValueError) as e:
-            # Return a structured error response
-            return {
-                'notation': 'Parse Error',
-                'chromosome_count': 0,
-                'sex_chromosomes': 'Unknown',
-                'abnormalities': [],
-                'confidence': 0,
-                'interpretation': f'Failed to parse API response: {str(e)}',
-                'detailed_findings': f'Raw response preview: {raw_content[:500]}...',
-                'analysis_time': datetime.now().isoformat(),
-                'technical_notes': f'Error parsing response from {provider_name}',
-                'provider': provider_name
-            }
+            raise ValueError("No valid JSON found in response")
+
+        except Exception as e:
+            return self._create_error_response(str(e), raw_content, provider_name)
+
+    def _finalize_result(self, result: Dict, provider_name: str) -> Dict:
+        """결과에 기본값 및 메타데이터 추가"""
+        result.setdefault('notation', 'Unable to determine')
+        result.setdefault('chromosome_count', 0)
+        result.setdefault('sex_chromosomes', 'Unknown')
+        result.setdefault('abnormalities', [])
+        result.setdefault('confidence', 0)
+        result.setdefault('interpretation', 'Analysis incomplete')
+        result.setdefault('detailed_findings', '')
+
+        result['analysis_time'] = datetime.now().isoformat()
+        result['technical_notes'] = f"Analysis performed using {provider_name}"
+        result['provider'] = provider_name
+
+        return result
+
+    def _create_error_response(self, error_msg: str, raw_content: str, provider_name: str) -> Dict:
+        """에러 응답 생성"""
+        preview = raw_content[:500] if raw_content else "No response content"
+        return {
+            'notation': 'Parse Error',
+            'chromosome_count': 0,
+            'sex_chromosomes': 'Unknown',
+            'abnormalities': [],
+            'confidence': 0,
+            'interpretation': f'Failed to parse API response: {error_msg}',
+            'detailed_findings': f'Raw response preview: {preview}...',
+            'analysis_time': datetime.now().isoformat(),
+            'technical_notes': f'Error parsing response from {provider_name}. Check raw response for details.',
+            'provider': provider_name
+        }
 
     def _analyze_with_cv_vlm(self, image: Image.Image) -> Dict:
         """CV counts chromosomes, VLM interprets the counts. Falls back to VLM-only if CV unreliable."""
