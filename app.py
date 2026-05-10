@@ -578,6 +578,53 @@ if 'consensus_settings' not in st.session_state:
     }
 if 'cv_detection' not in st.session_state:
     st.session_state.cv_detection = None
+if 'saved_api_key' not in st.session_state:
+    st.session_state.saved_api_key = None
+if 'api_key_saved' not in st.session_state:
+    st.session_state.api_key_saved = False
+
+
+def inject_local_storage_script(action: str, key_value: str = ""):
+    """Inject JavaScript to interact with localStorage"""
+    if action == "save":
+        return f"""
+        <script>
+        localStorage.setItem('karyotype_openai_api_key', '{key_value}');
+        console.log('API key saved to localStorage');
+        </script>
+        """
+    elif action == "clear":
+        return """
+        <script>
+        localStorage.removeItem('karyotype_openai_api_key');
+        console.log('API key cleared from localStorage');
+        </script>
+        """
+    elif action == "load":
+        return """
+        <div id="ls-loader" style="display:none;"></div>
+        <script>
+        (function() {
+            const savedKey = localStorage.getItem('karyotype_openai_api_key');
+            if (savedKey) {
+                document.getElementById('ls-loader').setAttribute('data-key', savedKey);
+                // Create hidden input for Streamlit to read
+                const container = document.querySelector('[data-testid="stSidebar"]');
+                if (container) {
+                    let indicator = document.getElementById('saved-key-indicator');
+                    if (!indicator) {
+                        indicator = document.createElement('div');
+                        indicator.id = 'saved-key-indicator';
+                        indicator.style.display = 'none';
+                        indicator.textContent = savedKey;
+                        container.appendChild(indicator);
+                    }
+                }
+            }
+        })();
+        </script>
+        """
+    return ""
 
 
 # Karyotype analysis system prompt - Enhanced with Chain-of-Thought and Verification
@@ -1694,12 +1741,48 @@ def display_sidebar_settings() -> tuple:
         consensus_keys = {}  # Keep for compatibility
 
         if provider in [APIProvider.OPENAI, APIProvider.CV_VLM]:
+            # Use saved key from session state if available
+            default_key = st.session_state.get('saved_api_key', '') or ''
+
             api_key = st.text_input(
                 "OpenAI API Key",
+                value=default_key,
                 type="password",
-                help="Enter your OpenAI API key (starts with sk-)"
+                help="Enter your OpenAI API key (starts with sk-)",
+                key="openai_api_key_input"
             )
-            st.caption("Get your key at [platform.openai.com](https://platform.openai.com/api-keys)")
+
+            # Save/Clear buttons
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("💾 Save", use_container_width=True, help="Save API key to browser"):
+                    if api_key and api_key.strip().startswith("sk-"):
+                        clean_key = api_key.strip()
+                        st.session_state.saved_api_key = clean_key
+                        st.session_state.api_key_saved = True
+                        # Inject JavaScript to save to localStorage
+                        st.markdown(inject_local_storage_script("save", clean_key), unsafe_allow_html=True)
+                        st.success("✅ Saved to browser!")
+                    else:
+                        st.error("❌ Invalid key (must start with sk-)")
+
+            with col2:
+                if st.button("🗑️ Clear", use_container_width=True, help="Clear saved API key"):
+                    st.session_state.saved_api_key = None
+                    st.session_state.api_key_saved = False
+                    # Inject JavaScript to clear localStorage
+                    st.markdown(inject_local_storage_script("clear"), unsafe_allow_html=True)
+                    st.info("🗑️ Cleared!")
+                    st.rerun()
+
+            # Show saved status
+            if st.session_state.get('saved_api_key'):
+                st.caption("🔐 API key saved (persists in browser)")
+            else:
+                st.caption("Get key: [platform.openai.com](https://platform.openai.com/api-keys)")
+
+            # Try to load from localStorage on page load
+            st.markdown(inject_local_storage_script("load"), unsafe_allow_html=True)
 
         st.divider()
 
