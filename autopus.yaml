@@ -85,8 +85,8 @@ orchestra:
                 timeout: 420
         gemini:
             binary: gemini
-            args: [-m, gemini-3.1-pro-preview, -p, ""]
-            pane_args: [-m, gemini-3.1-pro-preview]
+            args: [-m, gemini-2.5-flash, -p, "ping"]
+            pane_args: [-m, gemini-2.5-flash]
     commands:
         brainstorm:
             strategy: debate
