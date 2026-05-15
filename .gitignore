@@ -15,6 +15,7 @@ test_images/debug_output/
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # OS
 .DS_Store
